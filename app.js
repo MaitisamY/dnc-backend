@@ -1,12 +1,22 @@
-import express from "express";
-import cors from "cors";
-import bodyParser from "body-parser";
-import session from "express-session";
-import dotenv from "dotenv";
-import { v4 as uuidv4 } from 'uuid';
-import { getUser } from './controller/getUser.js';
-import { addUser } from './controller/addUser.js';
-import validator from "validator";
+import express from "express"
+import cors from "cors"
+import bodyParser from "body-parser"
+import session from "express-session"
+import dotenv from "dotenv"
+import { v4 as uuidv4 } from 'uuid'
+import csv from 'csv-parser';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
+import { getUser } from './controller/getUser.js'
+import { addUser } from './controller/addUser.js'
+import { getScrubData } from "./controller/getScrubData.js"
+import validator from "validator"
+import mysql from 'mysql2/promise'
+import { db } from "./config/dbConfig.js"
+import { fileURLToPath } from 'url';
+// Get the directory path of the current module file
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
  
 dotenv.config();
 const app = express();
@@ -14,6 +24,7 @@ const port = process.env.PORT || 3000;
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 app.use(cors());
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 app.use(session({
     secret: process.env.SECRET_KEY,
@@ -23,10 +34,40 @@ app.use(session({
     httpOnly: true
 }));
 
+// Define storage for multer
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, path.join(__dirname, 'uploads'));
+    },
+    filename: function (req, file, cb) {
+        const uniqueFileName = `${file.originalname}_${uuidv4()}`; // Ensure unique filenames
+        cb(null, uniqueFileName);
+    }
+});
+
+// Initialize multer upload
+const upload = multer({ storage: storage });
+
+// Check if the server is running!
 app.get('/', (req, res) => {
     res.json({ hello: 'Welcome to DNC Litigator Check - Backend!' });
 });
 
+// const userLoggedIn = (req, res, next) => {
+//     if (!req.session.userId) {
+//         res.status(401).json({ status: 401, message: 'Unauthorized' });
+//     } else {
+//         next();
+//     }
+// }
+
+app.get('/scrub/items', async (req, res) => {
+    const result = await getScrubData();
+
+    res.json({ status: 200, data: result });
+})
+
+// Login route
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
@@ -45,9 +86,11 @@ app.post('/login', async (req, res) => {
             // If user found, set session data if needed
             req.session.username = result[0].name; 
             req.session.token = uuidv4();
-            res.status(200).json({ status: 200, message: 'Login successful',
-            session: { token: req.session.token, name: req.session.username }, 
-            data: result,
+            res.status(200).json({ 
+                status: 200, 
+                message: 'Login successful',
+                session: { token: req.session.token, name: req.session.username }, 
+                data: result,
             });
         } else {
             // If user not found, return 404
@@ -65,6 +108,7 @@ app.post('/login', async (req, res) => {
     }
 });
 
+// Signup route
 app.post('/signup', async (req, res) => {
     const { name, email, phone, password } = req.body;
 
@@ -101,6 +145,353 @@ app.post('/signup', async (req, res) => {
     }
 });
 
+// Scrub route
+// app.post('/scrub', upload.single('file'), async (req, res) => {
+//     const { column, options, selectedItems } = req.query;
+//     const file = req.file;
+
+//     const fileName = file ? file.originalname : '';
+//     // Check if file was uploaded
+//     if (!req.file) {
+//         return res.status(400).json({ status: 400, message: 'No file uploaded' });
+//     }
+
+//     try {
+//         // Read CSV file to capture column names
+//         const csvColumnsPromise = new Promise((resolve, reject) => {
+//             let csvColumns = [];
+//             fs.createReadStream(req.file.path)
+//                 .pipe(csv())
+//                 .on('headers', (headers) => {
+//                     csvColumns = headers;
+//                     resolve(csvColumns);
+//                 })
+//                 .on('error', (error) => {
+//                     reject(error);
+//                 });
+//         });
+
+//         // Wait for csvColumnsPromise to resolve before proceeding
+//         const csvColumns = await csvColumnsPromise;
+
+//         // Find the column index that contains 'name'
+//         const nameColumnIndex = csvColumns.findIndex(header => {
+//             console.log('Checking header:', header);
+//             return header.trim().toLowerCase().includes('name');
+//         });
+//         console.log('Name column index:', nameColumnIndex);
+        
+
+//         // Read CSV file to capture column names and data
+//         const results = [];
+//         let totalColumnLength = 0; // Variable to hold the total length of the column
+//         let columnNameFound = false;
+//         fs.createReadStream(req.file.path)
+//             .pipe(csv())
+//             .on('headers', (headers) => {
+//                 // Check if the specified column exists in the CSV headers
+//                 columnNameFound = headers.includes(column);
+//                 console.log('CSV Headers:', headers);
+//             })
+//             .on('data', (data) => {
+//                 console.log('CSV Row:', data);
+//                 if (columnNameFound) {
+//                     // Clean and increment the total column length for each row in the CSV
+//                     const cleanedValue = cleanPhoneNumber(data[column]); // Implement cleanPhoneNumber function
+//                     if (cleanedValue) {
+//                         totalColumnLength++;
+//                     }
+//                     results.push({
+//                         name: data[nameColumnIndex],
+//                         phone: cleanedValue
+//                     });
+//                 } else {
+//                     console.error(`Column '${column}' not found in the CSV headers.`);
+//                 }
+//             })
+//             .on('end', async () => {
+//                 try {
+//                     const connection = await mysql.createConnection(db);
+
+//                     // Select all records from 'PostedLeads' table based on the column
+//                     const postedLeads = await connection.query(`SELECT Contact FROM PostedLeads`);
+
+//                     // Split records based on matching and non-matching rows
+//                     const matchingRecords = [];
+//                     const nonMatchingRecords = [];
+//                     results.forEach(row => {
+//                         const phoneNumber = row.phone; // Get the phone number from the specific column
+//                         const match = postedLeads.find(record => record.Contact == phoneNumber);
+//                         if (match) {
+//                             matchingRecords.push(row); // Push the whole row to matching records
+//                         } else {
+//                             nonMatchingRecords.push(row); // Push the whole row to non-matching records
+//                         }
+//                     });
+
+//                     // Write matching and non-matching records to CSV files
+//                     const matchingFilePath = path.join(__dirname, 'uploads', `${fileName}_matching_numbers_${uuidv4()}.csv`);
+//                     const nonMatchingFilePath = path.join(__dirname, 'uploads', `${fileName}_non_matching_numbers_${uuidv4()}.csv`);
+//                     await Promise.all([
+//                         writeCSV(matchingFilePath, matchingRecords),
+//                         writeCSV(nonMatchingFilePath, nonMatchingRecords)
+//                     ]);
+
+//                     // Save scrub data to 'scrub_records' table
+//                     const scrubbedAgainstStates = (selectedItems ?? []).length === 1
+//                         ? selectedItems[0]
+//                         : (selectedItems ?? []).length > 1
+//                         ? selectedItems.join(', ')
+//                         : '';
+//                     const scrubbedAgainstOptions = options && options.length > 1 ? options.join(', ') : options[0];
+//                     const totalNumbers = results.length;
+//                     const cleanNumbers = matchingRecords.length;
+//                     const badNumbers = nonMatchingRecords.length;
+//                     const cost = calculateCost(totalColumnLength);
+//                     const userId = 1;
+//                     const date = new Date().toDateString();
+//                     await connection.query(
+//                         `INSERT INTO scrub_records 
+//                             (user_id, date, uploaded_file, scrubbed_against_states, scrubbed_against_options, 
+//                                 total_numbers, clean_numbers, bad_numbers, cost) 
+//                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                         [userId, date, fileName, scrubbedAgainstStates, scrubbedAgainstOptions,
+//                             totalNumbers, cleanNumbers, badNumbers, cost]
+//                     );
+
+//                     // Respond with success message and scrub data
+//                     res.status(200).json({
+//                         message: 'Scrub data processed successfully',
+//                         matchingFilePath,
+//                         nonMatchingFilePath,
+//                         scrubbedData: {
+//                             user_id: userId,
+//                             date,
+//                             uploaded_file: fileName,
+//                             total_numbers: totalNumbers,
+//                             clean_numbers: cleanNumbers,
+//                             bad_numbers: badNumbers,
+//                             cost: cost
+//                         }
+//                     });
+
+//                     // Close the connection
+//                     await connection.end();
+//                 } catch (error) {
+//                     console.error('Error processing scrub data:', error);
+//                     res.status(500).json({ status: 500, message: 'Error processing scrub data' });
+//                 }
+//             });
+//     } catch (error) {
+//         console.error('Error during scrub:', error);
+//         res.status(500).json({ status: 500, message: 'Internal server error' });
+//     }
+// });
+
+// async function writeCSV(filePath, data) {
+//     return new Promise((resolve, reject) => {
+//         const writer = fs.createWriteStream(filePath);
+        
+//         // Write headers
+//         writer.write('Name,Phone\n');
+        
+//         // Write data for matching and non-matching records
+//         data.forEach(row => {
+//             // const name = row.name ?? '';
+//             // const phone = row.phone ?? '';
+//             writer.write(`${row.name},${row.phone}\n`);
+//         });
+        
+//         writer.end();
+//         writer.on('finish', resolve);
+//         writer.on('error', reject);
+//     });
+// }
+
+// Scrub route
+app.post('/scrub', upload.single('file'), async (req, res) => {
+    const { column, options, selectedItems } = req.query;
+    const file = req.file;
+
+    const fileName = file ? file.originalname : '';
+    // Check if file was uploaded
+    if (!req.file) {
+        return res.status(400).json({ status: 400, message: 'No file uploaded' });
+    }
+
+    try {
+        // Read CSV file to capture column names and data
+        const csvData = [];
+        let columnNameFound = false;
+        fs.createReadStream(req.file.path)
+            .pipe(csv())
+            .on('headers', (headers) => {
+                // Check if the specified column exists in the CSV headers
+                columnNameFound = headers.includes(column);
+                
+            })
+            .on('data', (data) => {
+                
+                if (columnNameFound) {
+                    csvData.push(data); // Store CSV data in a temporary variable
+                } else {
+                    console.error(`Column '${column}' not found in the CSV headers.`);
+                }
+            })
+            .on('end', async () => {
+                try {
+                    const connection = await mysql.createConnection(db);
+
+                    // Select all records from 'PostedLeads' table based on the column
+                    const postedLeads = await connection.query(`SELECT * FROM PostedLeads`);
+
+                    // Split records based on matching and non-matching rows
+                    const matchingRecords = [];
+                    const nonMatchingRecords = [];
+                    const cleanedCSVData = csvData.map(row => ({ ...row, [column]: cleanPhoneNumber(row[column]) }));
+                    cleanedCSVData.forEach(row => {
+                        const phoneNumber = row[column]; // Get the phone number from the specific column
+                        
+                        const matches = postedLeads.filter(recordArray => {
+                            // Iterate over each object inside the recordArray
+                            for (const record of recordArray) {
+                                const postedContact = record.contact; // Get the contact from each object in the recordArray
+                                const csvPhoneNumber = cleanPhoneNumber(phoneNumber); // Clean the phone number from the CSV data
+                               
+                                // Check if both the contact and phone number are defined and equal after cleaning
+                                if (postedContact !== null && csvPhoneNumber !== null && postedContact === csvPhoneNumber) {
+                                    return true; // If a match is found, return true
+                                }
+                            }
+                            return false; // If no match is found in any object of the recordArray, return false
+                        });
+                        
+                        if (matches.length > 0) {
+                            matchingRecords.push(row); // Push the whole row to matching records
+                        } else {
+                            nonMatchingRecords.push(row); // Push the whole row to non-matching records
+                        }
+                    });
+
+                    // Generate unique IDs for matching and non-matching files
+                    const matchingFileId = uuidv4();
+                    const nonMatchingFileId = uuidv4();
+
+                    // File paths for matching and non-matching CSV files
+                    const matchingFilePath = path.join(__dirname, 'uploads', `${fileName}_matching_numbers_${matchingFileId}.csv`);
+                    const nonMatchingFilePath = path.join(__dirname, 'uploads', `${fileName}_non_matching_numbers_${nonMatchingFileId}.csv`);
+
+                    // Write matching and non-matching records to CSV files
+                    await Promise.all([
+                        writeCSV(matchingFilePath, matchingRecords),
+                        writeCSV(nonMatchingFilePath, nonMatchingRecords)
+                    ]);
+
+                    // Extract just the file names without the path
+                    const matchingFileName = `${fileName}_matching_numbers_${matchingFileId}.csv`;
+                    const nonMatchingFileName = `${fileName}_non_matching_numbers_${nonMatchingFileId}.csv`;
+
+                    // Save scrub data to 'scrub_records' table
+                    const scrubbedAgainstStates = (selectedItems ?? []).length === 1
+                        ? selectedItems[0]
+                        : (selectedItems ?? []).length > 1
+                        ? selectedItems.join(', ')
+                        : '';
+                    const scrubbedAgainstOptions = (options ?? []).length === 1 
+                        ? options[0] : (options ?? []).length > 1 ? options.join(', ') : '';
+                    const totalNumbers = csvData.length;
+                    const cleanNumbers = matchingRecords.length;
+                    const badNumbers = nonMatchingRecords.length;
+                    const cost = calculateCost(csvData.length);
+                    const userId = 1;
+                    const date = new Date().toDateString();
+                    await connection.query(
+                        `INSERT INTO scrub_records 
+                            (user_id, date, uploaded_file, scrubbed_against_states, scrubbed_against_options, 
+                                total_numbers, clean_numbers, bad_numbers, cost, matching_file_path, non_matching_file_path) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [userId, date, fileName, scrubbedAgainstStates, scrubbedAgainstOptions,
+                            totalNumbers, cleanNumbers, badNumbers, cost, matchingFileName, nonMatchingFileName]
+                    );
+
+                    // Respond with success message and scrub data
+                    res.status(200).json({
+                        message: 'Scrub data processed successfully',
+                        scrubbedData: {
+                            date,
+                            uploaded_file: fileName,
+                            scrubbed_against_states: scrubbedAgainstStates,
+                            scrubbed_against_options: scrubbedAgainstOptions,
+                            total_numbers: totalNumbers,
+                            clean_numbers: cleanNumbers,
+                            bad_numbers: badNumbers,
+                            matchingFilePath: matchingFileName,
+                            nonMatchingFilePath: nonMatchingFileName,
+                            cost: cost
+                        }
+                    });
+
+                    // Close the connection
+                    await connection.end();
+                } catch (error) {
+                    console.error('Error processing scrub data:', error);
+                    res.status(500).json({ status: 500, message: 'Error processing scrub data' });
+                }
+            });
+    } catch (error) {
+        console.error('Error during scrub:', error);
+        res.status(500).json({ status: 500, message: 'Internal server error' });
+    }
+});
+
+async function writeCSV(filePath, data) {
+    return new Promise((resolve, reject) => {
+        const writer = fs.createWriteStream(filePath);
+        
+        writer.on('error', reject);
+
+        writer.on('open', () => {
+            if (data.length === 0) {
+                writer.end();
+                resolve();
+                return;
+            }
+            
+            // Write headers
+            const headers = Object.keys(data[0]).join(','); // Assuming all rows have the same structure
+            writer.write(`${headers}\n`);
+            
+            // Write data for matching and non-matching records
+            data.forEach(row => {
+                const values = Object.values(row).join(',');
+                writer.write(`${values}\n`);
+            });
+            
+            writer.end();
+        });
+
+        writer.on('finish', resolve);
+    });
+}
+
+
+// Function to calculate cost
+function calculateCost(uploadedNumbers) {
+    // Cost calculation logic here
+    const coins = 270000;
+    return coins - uploadedNumbers;
+}
+
+function cleanPhoneNumber(phoneNumber) {
+    // Check if phoneNumber is defined
+    if (phoneNumber === undefined || phoneNumber === null) {
+        return null;
+    }
+    // Remove all non-numeric characters from the phone number
+    return phoneNumber.toString().replace(/\D/g, '');
+}
+
+// Logout route
 app.post('/logout', (req, res) => {
     req.session.destroy((error) => {
         if (error) {

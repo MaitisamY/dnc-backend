@@ -1,6 +1,6 @@
-import mysql from 'mysql2/promise';
+import mysql from 'mysql2/promise'
 import { db } from '../config/dbConfig.js'
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcrypt'
 
 export const addUser = async (name, email, phone, password) => {
     try {
