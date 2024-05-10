@@ -17,8 +17,10 @@ import { db } from "./config/dbConfig.js"
 import { fileURLToPath } from 'url';
 // Get the directory path of the current module file
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const mainFile = uuidv4();
  
 dotenv.config();
+
 const app = express();
 const port = process.env.PORT || 3000;
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -40,7 +42,7 @@ const storage = multer.diskStorage({
         cb(null, path.join(__dirname, 'uploads'));
     },
     filename: function (req, file, cb) {
-        const uniqueFileName = `${file.originalname}_${uuidv4()}`; // Ensure unique filenames
+        const uniqueFileName = `${file.originalname}_${mainFile}.csv`; // Ensure unique filenames
         cb(null, uniqueFileName);
     }
 });
@@ -65,7 +67,51 @@ app.get('/scrub/items', async (req, res) => {
     const result = await getScrubData();
 
     res.json({ status: 200, data: result });
-})
+});
+
+app.get('/download/uploaded-file/:fileName', (req, res) => {
+    const fileName = req.params.fileName;
+    const filePath = path.join(__dirname, 'uploads', fileName);
+    
+    // Check if file exists
+    fs.access(filePath, fs.constants.F_OK, (err) => {
+        if (err) {
+            console.error('File does not exist:', err);
+            return res.status(404).send('File not found');
+        }
+        
+        // Stream file to client
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+    });
+});
+
+
+app.get('/download/matching-file/:fileName', (req, res) => {
+    const fileName = req.params.fileName;
+    const filePath = path.join(__dirname, 'uploads', fileName);
+    sendFile(fileName, filePath, res);
+});
+
+app.get('/download/non-matching-file/:fileName', (req, res) => {
+    const fileName = req.params.fileName;
+    const filePath = path.join(__dirname, 'uploads', fileName);
+    sendFile(fileName, filePath, res);
+});
+
+function sendFile(fileName, filePath, res) {
+    // Check if file exists
+    fs.access(filePath, fs.constants.F_OK, (err) => {
+        if (err) {
+            console.error('File does not exist:', err);
+            return res.status(404).send('File not found');
+        }
+
+        // Stream file to client
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+    });
+}
 
 // Login route
 app.post('/login', async (req, res) => {
@@ -146,174 +192,12 @@ app.post('/signup', async (req, res) => {
 });
 
 // Scrub route
-// app.post('/scrub', upload.single('file'), async (req, res) => {
-//     const { column, options, selectedItems } = req.query;
-//     const file = req.file;
-
-//     const fileName = file ? file.originalname : '';
-//     // Check if file was uploaded
-//     if (!req.file) {
-//         return res.status(400).json({ status: 400, message: 'No file uploaded' });
-//     }
-
-//     try {
-//         // Read CSV file to capture column names
-//         const csvColumnsPromise = new Promise((resolve, reject) => {
-//             let csvColumns = [];
-//             fs.createReadStream(req.file.path)
-//                 .pipe(csv())
-//                 .on('headers', (headers) => {
-//                     csvColumns = headers;
-//                     resolve(csvColumns);
-//                 })
-//                 .on('error', (error) => {
-//                     reject(error);
-//                 });
-//         });
-
-//         // Wait for csvColumnsPromise to resolve before proceeding
-//         const csvColumns = await csvColumnsPromise;
-
-//         // Find the column index that contains 'name'
-//         const nameColumnIndex = csvColumns.findIndex(header => {
-//             console.log('Checking header:', header);
-//             return header.trim().toLowerCase().includes('name');
-//         });
-//         console.log('Name column index:', nameColumnIndex);
-        
-
-//         // Read CSV file to capture column names and data
-//         const results = [];
-//         let totalColumnLength = 0; // Variable to hold the total length of the column
-//         let columnNameFound = false;
-//         fs.createReadStream(req.file.path)
-//             .pipe(csv())
-//             .on('headers', (headers) => {
-//                 // Check if the specified column exists in the CSV headers
-//                 columnNameFound = headers.includes(column);
-//                 console.log('CSV Headers:', headers);
-//             })
-//             .on('data', (data) => {
-//                 console.log('CSV Row:', data);
-//                 if (columnNameFound) {
-//                     // Clean and increment the total column length for each row in the CSV
-//                     const cleanedValue = cleanPhoneNumber(data[column]); // Implement cleanPhoneNumber function
-//                     if (cleanedValue) {
-//                         totalColumnLength++;
-//                     }
-//                     results.push({
-//                         name: data[nameColumnIndex],
-//                         phone: cleanedValue
-//                     });
-//                 } else {
-//                     console.error(`Column '${column}' not found in the CSV headers.`);
-//                 }
-//             })
-//             .on('end', async () => {
-//                 try {
-//                     const connection = await mysql.createConnection(db);
-
-//                     // Select all records from 'PostedLeads' table based on the column
-//                     const postedLeads = await connection.query(`SELECT Contact FROM PostedLeads`);
-
-//                     // Split records based on matching and non-matching rows
-//                     const matchingRecords = [];
-//                     const nonMatchingRecords = [];
-//                     results.forEach(row => {
-//                         const phoneNumber = row.phone; // Get the phone number from the specific column
-//                         const match = postedLeads.find(record => record.Contact == phoneNumber);
-//                         if (match) {
-//                             matchingRecords.push(row); // Push the whole row to matching records
-//                         } else {
-//                             nonMatchingRecords.push(row); // Push the whole row to non-matching records
-//                         }
-//                     });
-
-//                     // Write matching and non-matching records to CSV files
-//                     const matchingFilePath = path.join(__dirname, 'uploads', `${fileName}_matching_numbers_${uuidv4()}.csv`);
-//                     const nonMatchingFilePath = path.join(__dirname, 'uploads', `${fileName}_non_matching_numbers_${uuidv4()}.csv`);
-//                     await Promise.all([
-//                         writeCSV(matchingFilePath, matchingRecords),
-//                         writeCSV(nonMatchingFilePath, nonMatchingRecords)
-//                     ]);
-
-//                     // Save scrub data to 'scrub_records' table
-//                     const scrubbedAgainstStates = (selectedItems ?? []).length === 1
-//                         ? selectedItems[0]
-//                         : (selectedItems ?? []).length > 1
-//                         ? selectedItems.join(', ')
-//                         : '';
-//                     const scrubbedAgainstOptions = options && options.length > 1 ? options.join(', ') : options[0];
-//                     const totalNumbers = results.length;
-//                     const cleanNumbers = matchingRecords.length;
-//                     const badNumbers = nonMatchingRecords.length;
-//                     const cost = calculateCost(totalColumnLength);
-//                     const userId = 1;
-//                     const date = new Date().toDateString();
-//                     await connection.query(
-//                         `INSERT INTO scrub_records 
-//                             (user_id, date, uploaded_file, scrubbed_against_states, scrubbed_against_options, 
-//                                 total_numbers, clean_numbers, bad_numbers, cost) 
-//                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-//                         [userId, date, fileName, scrubbedAgainstStates, scrubbedAgainstOptions,
-//                             totalNumbers, cleanNumbers, badNumbers, cost]
-//                     );
-
-//                     // Respond with success message and scrub data
-//                     res.status(200).json({
-//                         message: 'Scrub data processed successfully',
-//                         matchingFilePath,
-//                         nonMatchingFilePath,
-//                         scrubbedData: {
-//                             user_id: userId,
-//                             date,
-//                             uploaded_file: fileName,
-//                             total_numbers: totalNumbers,
-//                             clean_numbers: cleanNumbers,
-//                             bad_numbers: badNumbers,
-//                             cost: cost
-//                         }
-//                     });
-
-//                     // Close the connection
-//                     await connection.end();
-//                 } catch (error) {
-//                     console.error('Error processing scrub data:', error);
-//                     res.status(500).json({ status: 500, message: 'Error processing scrub data' });
-//                 }
-//             });
-//     } catch (error) {
-//         console.error('Error during scrub:', error);
-//         res.status(500).json({ status: 500, message: 'Internal server error' });
-//     }
-// });
-
-// async function writeCSV(filePath, data) {
-//     return new Promise((resolve, reject) => {
-//         const writer = fs.createWriteStream(filePath);
-        
-//         // Write headers
-//         writer.write('Name,Phone\n');
-        
-//         // Write data for matching and non-matching records
-//         data.forEach(row => {
-//             // const name = row.name ?? '';
-//             // const phone = row.phone ?? '';
-//             writer.write(`${row.name},${row.phone}\n`);
-//         });
-        
-//         writer.end();
-//         writer.on('finish', resolve);
-//         writer.on('error', reject);
-//     });
-// }
-
-// Scrub route
 app.post('/scrub', upload.single('file'), async (req, res) => {
     const { column, options, selectedItems } = req.query;
     const file = req.file;
 
-    const fileName = file ? file.originalname : '';
+    const fileName = file ? file.originalname + '_' + mainFile + '.csv' : '';
+    const matchingAndNonMatching = file ? file.originalname : '';
     // Check if file was uploaded
     if (!req.file) {
         return res.status(400).json({ status: 400, message: 'No file uploaded' });
@@ -378,8 +262,8 @@ app.post('/scrub', upload.single('file'), async (req, res) => {
                     const nonMatchingFileId = uuidv4();
 
                     // File paths for matching and non-matching CSV files
-                    const matchingFilePath = path.join(__dirname, 'uploads', `${fileName}_matching_numbers_${matchingFileId}.csv`);
-                    const nonMatchingFilePath = path.join(__dirname, 'uploads', `${fileName}_non_matching_numbers_${nonMatchingFileId}.csv`);
+                    const matchingFilePath = path.join(__dirname, 'uploads', `${matchingAndNonMatching}_matching_numbers_${matchingFileId}.csv`);
+                    const nonMatchingFilePath = path.join(__dirname, 'uploads', `${matchingAndNonMatching}_non_matching_numbers_${nonMatchingFileId}.csv`);
 
                     // Write matching and non-matching records to CSV files
                     await Promise.all([
@@ -388,8 +272,8 @@ app.post('/scrub', upload.single('file'), async (req, res) => {
                     ]);
 
                     // Extract just the file names without the path
-                    const matchingFileName = `${fileName}_matching_numbers_${matchingFileId}.csv`;
-                    const nonMatchingFileName = `${fileName}_non_matching_numbers_${nonMatchingFileId}.csv`;
+                    const matchingFileName = `${matchingAndNonMatching}_matching_numbers_${matchingFileId}.csv`;
+                    const nonMatchingFileName = `${matchingAndNonMatching}_non_matching_numbers_${nonMatchingFileId}.csv`;
 
                     // Save scrub data to 'scrub_records' table
                     const scrubbedAgainstStates = (selectedItems ?? []).length === 1
@@ -408,7 +292,7 @@ app.post('/scrub', upload.single('file'), async (req, res) => {
                     await connection.query(
                         `INSERT INTO scrub_records 
                             (user_id, date, uploaded_file, scrubbed_against_states, scrubbed_against_options, 
-                                total_numbers, clean_numbers, bad_numbers, cost, matching_file_path, non_matching_file_path) 
+                                total_numbers, clean_numbers, bad_numbers, cost, matching_file, non_matching_file) 
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [userId, date, fileName, scrubbedAgainstStates, scrubbedAgainstOptions,
                             totalNumbers, cleanNumbers, badNumbers, cost, matchingFileName, nonMatchingFileName]
