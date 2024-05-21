@@ -9,13 +9,13 @@ import { fileURLToPath } from 'url'
 
 import sequelize from './config/sequelize.js';
 import flash from 'connect-flash';
-import serverRoute from './routes/serverRoute.js'
 import getScrubRoute from './routes/getScrubRoute.js'
 import loginRoute from './routes/loginRoute.js'
 import signupRoute from './routes/signUpRoute.js'
 import logoutRoute from './routes/logoutRoute.js'
 import getCoinsRoute from './routes/getCoinsRoute.js'
 import addScrubItemRoute from './routes/addScrubItemRoute.js'
+import adminLoginRoute from './routes/adminLoginRoute.js'
 
 // Get the directory path of the current module file
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -45,6 +45,7 @@ app.use(flash());
 // Import and sync Sequelize models
 import './models/Users.js';
 import './models/ScrubRecords.js';
+import './models/Admins.js';
 
 // Sync models with the database
 sequelize.sync();
@@ -53,10 +54,20 @@ sequelize.sync();
 app.use('/', loginRoute);
 app.use('/', signupRoute);
 app.use('/', logoutRoute);
-app.use('/', serverRoute);
 app.use('/', getScrubRoute);
 app.use('/', getCoinsRoute);
 app.use('/', addScrubItemRoute);
+app.use('/', adminLoginRoute);
+
+/* Custom Routes */
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'static', 'main.html'));
+});
+
+app.get('/uploads', (req, res) => {
+    res.sendFile(path.join(__dirname, 'static', 'unauthorized.html'));
+})
 
 app.get('/download/uploaded-file/:fileName', (req, res) => {
     const fileName = req.params.fileName;
