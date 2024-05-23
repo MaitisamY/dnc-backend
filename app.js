@@ -2,7 +2,6 @@ import express from 'express'
 import cors from 'cors'
 import bodyParser from 'body-parser'
 import session from 'express-session'
-import fs from 'fs'
 import path from 'path'
 import passport from 'passport';
 import { fileURLToPath } from 'url'
@@ -16,6 +15,8 @@ import logoutRoute from './routes/logoutRoute.js'
 import getCoinsRoute from './routes/getCoinsRoute.js'
 import addScrubItemRoute from './routes/addScrubItemRoute.js'
 import adminLoginRoute from './routes/adminLoginRoute.js'
+import getPackages from './routes/getPackages.js'
+import addPackage from './routes/addPackage.js'
 
 // Get the directory path of the current module file
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -46,6 +47,7 @@ app.use(flash());
 import './models/Users.js';
 import './models/ScrubRecords.js';
 import './models/Admins.js';
+import './models/Packages.js';
 
 // Sync models with the database
 sequelize.sync();
@@ -58,6 +60,8 @@ app.use('/', getScrubRoute);
 app.use('/', getCoinsRoute);
 app.use('/', addScrubItemRoute);
 app.use('/', adminLoginRoute);
+app.use('/', getPackages);
+app.use('/', addPackage);
 
 /* Custom Routes */
 
@@ -68,50 +72,6 @@ app.get('/', (req, res) => {
 app.get('/uploads', (req, res) => {
     res.sendFile(path.join(__dirname, 'static', 'unauthorized.html'));
 })
-
-app.get('/download/uploaded-file/:fileName', (req, res) => {
-    const fileName = req.params.fileName;
-    const filePath = path.join(__dirname, 'uploads', fileName);
-    
-    // Check if file exists
-    fs.access(filePath, fs.constants.F_OK, (err) => {
-        if (err) {
-            console.error('File does not exist:', err);
-            return res.status(404).send('File not found');
-        }
-        
-        // Stream file to client
-        const fileStream = fs.createReadStream(filePath);
-        fileStream.pipe(res);
-    });
-});
-
-
-app.get('/download/matching-file/:fileName', (req, res) => {
-    const fileName = req.params.fileName;
-    const filePath = path.join(__dirname, 'uploads', fileName);
-    sendFile(fileName, filePath, res);
-});
-
-app.get('/download/non-matching-file/:fileName', (req, res) => {
-    const fileName = req.params.fileName;
-    const filePath = path.join(__dirname, 'uploads', fileName);
-    sendFile(fileName, filePath, res);
-});
-
-function sendFile(fileName, filePath, res) {
-    // Check if file exists
-    fs.access(filePath, fs.constants.F_OK, (err) => {
-        if (err) {
-            console.error('File does not exist:', err);
-            return res.status(404).send('File not found');
-        }
-
-        // Stream file to client
-        const fileStream = fs.createReadStream(filePath);
-        fileStream.pipe(res);
-    });
-}
 
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
